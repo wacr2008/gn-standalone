@@ -7,6 +7,10 @@
 难道google的员都不用windows了？？？
 
 
+为了中国人民可以正常git clone,上传了一个压缩包 gn-standalone.7z，直接解压就好了。
+
+
+
 1.cd C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\
 2.C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC
 2.vcvarsall.bat
