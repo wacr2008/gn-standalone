@@ -11,8 +11,7 @@
 
 
 
-1.cd C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\
-2.C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC
+1.C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC
 2.vcvarsall.bat
 3.python tools\gn\bootstrap\bootstrap.py -s
 
