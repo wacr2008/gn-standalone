@@ -103,8 +103,15 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
         queue.put(data, block=True)
       out.close()
 
-    try:
-      proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=False,
+    try:      
+      if is_win : 
+        startupinfo = subprocess.STARTUPINFO() 
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW 
+        startupinfo.wShowWindow = subprocess.SW_HIDE 
+      else: 
+        startupinfo = None 
+
+      proc = subprocess.Popen(command,startupinfo=startupinfo, stdout=subprocess.PIPE, shell=False,
                               stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
     except OSError as e:
       logging.exception('Execution of %s raised exception: %s.', (command, e))
