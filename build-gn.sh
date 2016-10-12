@@ -17,7 +17,6 @@ tar -xvzf libevent.tar.gz
 cd ../..
 git clone https://chromium.googlesource.com/chromium/src/base
 git clone https://chromium.googlesource.com/chromium/src/build
-git clone https://chromium.googlesource.com/chromium/src/build/config
 mkdir testing
 cd testing
 git clone https://chromium.googlesource.com/chromium/testing/gtest
