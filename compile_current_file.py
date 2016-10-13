@@ -1,9 +1,14 @@
+#!/usr/bin/python
+# Copyright 2016 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 import datetime
 import fnmatch
 import logging
 import os
 import os.path
-import queue
+import queue as Queue
 import sublime
 import sublime_plugin
 import subprocess
@@ -13,15 +18,41 @@ import time
 import sys
 
 is_win = sys.platform.startswith('win')
-stdout_type = "print"
+# Change to an absolute reference if ninja is not on your path
+path_to_ninja = 'ninja'
 
-class InsertText(sublime_plugin.TextCommand):
-  def run(self, edit, args):
-    text = args['text'] + "\n"
-    self.view.set_read_only(False)
-    self.view.insert(edit, self.view.size(), args['text'])
-    self.view.show(self.view.size())
-    self.view.set_read_only(True)
+#modify by wuding 20161013 
+def find_ninja_file(ninja_root_path, relative_file_path_to_find):
+  '''
+  Returns the first *.ninja file in ninja_root_path that contains
+  relative_file_path_to_find. Otherwise, returns None.
+  '''
+  file_build_relative_path = None
+  matches = []
+  for root, dirnames, filenames in os.walk(ninja_root_path):
+    for filename in fnmatch.filter(filenames, '*.ninja'):
+        matches.append(os.path.join(root, filename))
+  logging.debug("Found %d Ninja targets", len(matches))
+
+  for ninja_file in matches:
+    for line in open(ninja_file):
+      if relative_file_path_to_find in line:
+        if is_win :   
+              build_a,build_b = line.split(':',1)
+              build_c,ninja_build_object = build_a.split(' ',1)
+              
+        project_file = os.path.basename(ninja_file)
+        return (ninja_file,ninja_build_object)
+  return (None,None)
+
+
+class PrintOutputCommand(sublime_plugin.TextCommand):
+    def run(self, edit, **args):
+        self.view.set_read_only(False)
+        self.view.insert(edit, self.view.size(), args['text'])
+        self.view.show(self.view.size())
+        self.view.set_read_only(True)
+
 
 class CompileCurrentFile(sublime_plugin.TextCommand):
   # static thread so that we don't try to run more than once at a time.
@@ -33,9 +64,6 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     self.thread_id = threading.current_thread().ident
     self.text_to_draw = ""
     self.interrupted = False
-
-  def display_path(self, win_path):
-   return win_path.replace("\\", "/")
 
   def description(self):
     return ("Compiles the file in the current view using Ninja, so all that "
@@ -56,11 +84,9 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     self.lock.release()
 
     if len(text_to_draw):
-      text_to_draw = "ninja> " + text_to_draw
-      if stdout_type == "print":
-        print(text_to_draw)
-      else:
-        self.output_panel.run_command("insert_text", {"args":{'text':text_to_draw}})
+      self.output_panel.run_command('print_output', {'text': text_to_draw})
+      #self.view.window().run_command("show_panel", {"panel": "output.exec"})
+      logging.debug("Added text:\n%s.", text_to_draw)
 
   def update_panel_text(self, text_to_draw):
     self.lock.acquire()
@@ -68,7 +94,7 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     self.lock.release()
     sublime.set_timeout(self.draw_panel_text, 0)
 
-  def execute_command(self, command):
+  def execute_command(self, command, cwd):
     """Execute the provided command and send ouput to panel.
 
     Because the implementation of subprocess can deadlock on windows, we use
@@ -103,22 +129,16 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
         queue.put(data, block=True)
       out.close()
 
-    try:      
-      if is_win : 
-        startupinfo = subprocess.STARTUPINFO() 
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW 
-        startupinfo.wShowWindow = subprocess.SW_HIDE 
-      else: 
-        startupinfo = None 
-
-      proc = subprocess.Popen(command,startupinfo=startupinfo, stdout=subprocess.PIPE, shell=False,
+    try:
+      os.chdir(cwd)
+      proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True,
                               stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
     except OSError as e:
       logging.exception('Execution of %s raised exception: %s.', (command, e))
       return -1
 
     # Use a Queue to pass the text from the reading thread to this one.
-    stdout_queue = queue.Queue()
+    stdout_queue = Queue.Queue()
     stdout_thread = threading.Thread(target=EnqueueOutput,
                                      args=(proc.stdout, stdout_queue))
     stdout_thread.daemon = True  # Ensure this exits if the parent dies
@@ -138,22 +158,21 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
       for _ in range(2048):
         try:
           current_content += stdout_queue.get_nowait().decode('utf-8')
-        except queue.Empty:
+        except Queue.Empty:
           break
       self.update_panel_text(current_content)
       current_content = ""
       if exit_code is not None:
         while stdout_thread.isAlive() or not stdout_queue.empty():
           try:
-            current_content += stdout_queue.get(block=True, timeout=1)
-          except queue.Empty:
+            current_content += stdout_queue.get(
+                               block=True, timeout=1).decode('utf-8')
+          except Queue.Empty:
             # Queue could still potentially contain more input later.
             pass
-
         time_length = datetime.datetime.now() - self.start_time
-        self.update_panel_text(current_content)
-        self.update_panel_text("Done (%s seconds)" % time_length.seconds)
-
+        self.update_panel_text("%s\nDone!\n(%s seconds)" %
+                               (current_content, time_length.seconds))
         return exit_code
       # We sleep a little to give the child process a chance to move forward
       # before we poll it again.
@@ -164,7 +183,6 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     return 1
 
   def run(self, edit, target_build):
-    self.edits = edit
     """The method called by Sublime Text to execute our command.
 
     Note that this command is a toggle, so if the thread is are already running,
@@ -178,76 +196,51 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     if self.thread and self.thread.is_alive():
       self.interrupted = True
       self.thread.join(5.0)
-      self.update_panel_text("\n\nInterrupted current command: %s" % command)
+      self.update_panel_text("\n\nInterrupted current command:\n%s\n" % command)
       self.thread = None
       return
 
     # It's nice to display how long it took to build.
     self.start_time = datetime.datetime.now()
-
-    if stdout_type != "print":
-      # Output our results in the same panel as a regular build.
-      self.output_panel = self.view.window().create_output_panel("exec")
-      self.view.window().run_command("show_panel", {"panel": "output.exec"})
-    else:
-      sublime.active_window().run_command("show_panel", {"panel": "console", "toggle": True})
-
+    # Output our results in the same panel as a regular build.
+    self.output_panel = self.view.window().get_output_panel("exec")
+    self.output_panel.set_read_only(True)
+    self.view.window().run_command("show_panel", {"panel": "output.exec"})
     # TODO(mad): Not sure if the project folder is always the first one... ???
     project_folder = self.view.window().folders()[0]
-    self.update_panel_text("Compiling current file %s" %
+    self.update_panel_text("Compiling current file %s\n" %
                            self.view.file_name())
     # The file must be somewhere under the project folder...
     if (project_folder.lower() !=
         self.view.file_name()[:len(project_folder)].lower()):
       self.update_panel_text(
-          "ERROR: File %s is not in current project folder %s" %
+          "ERROR: File %s is not in current project folder %s\n" %
               (self.view.file_name(), project_folder))
     else:
-      # Look for a .ninja file that contains our current file.
-      logging.debug("Searching for Ninja target")
-      file_relative_path = self.view.file_name()[len(project_folder) + 1:]
+      output_dir = os.path.join(project_folder, 'out', target_build)
+      source_relative_path = os.path.relpath(self.view.file_name(),
+                             output_dir)
+      
+      #add by wuding 20161013 
       if is_win :
-        file_relative_path = self.display_path(file_relative_path)
+        file_relative_path = source_relative_path
+        file_relative_path = file_relative_path.replace("\\", "/")
+        ninja_build_file,ninja_build_obj_path = find_ninja_file(output_dir, file_relative_path)
+        source_relative_path = ninja_build_obj_path;
 
-      output_dir = "%s/out/%s" % (project_folder, target_build)
-      matches = []
-      for root, dirnames, filenames in os.walk(output_dir):
-        for filename in fnmatch.filter(filenames, '*.ninja'):
-            matches.append(os.path.join(root, filename))
-      logging.debug("Found %d Ninja targets", len(matches))
+      command = [
+          path_to_ninja, "-C", os.path.join(project_folder, 'out',
+                                            target_build),
+          source_relative_path + '^']
 
-      # The project file name is needed to construct the full Ninja target path.
-      project_file = None
-      file_build_relative_path = None
-      for ninja_file in matches:
-        for line in open(ninja_file):
-          if file_relative_path in line:
-            if is_win :   
-              build_a,build_b = line.split(':',1)
-              build_c,file_build_relative_path = build_a.split(' ',1)
-              
-            project_file = os.path.basename(ninja_file)
-            break
-      if project_file is None:
-        self.update_panel_text(
-            "ERROR: File %s is not in any Ninja file under %s" %
-                (file_relative_path, output_dir))
-      else:
-        filename = os.path.splitext(os.path.basename(file_relative_path))[0]
-        if is_win : 
-          target = file_build_relative_path
-        else:
-          target = "obj/%s/%s.%s.o"  % (os.path.dirname(file_relative_path),
-                                         os.path.splitext(project_file)[0],
-                                         filename)
-
-        command = [
-            "ninja", "-C", "%s/out/%s" % (project_folder, target_build),
-            target]
-        self.interrupted = False
-        self.thread = threading.Thread(target=self.execute_command,
-                                       kwargs={"command":command})
-        self.thread.start()
+      
+      
+      self.update_panel_text(' '.join(command) + '\n')
+      self.interrupted = False
+      self.thread = threading.Thread(target=self.execute_command,
+                                     kwargs={"command":command,
+                                             "cwd": output_dir})
+      self.thread.start()
 
     time_length = datetime.datetime.now() - self.start_time
     logging.debug("Took %s seconds on UI thread to startup",
