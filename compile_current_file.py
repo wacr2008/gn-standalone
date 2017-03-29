@@ -20,32 +20,7 @@ import sys
 is_win = sys.platform.startswith('win')
 # Change to an absolute reference if ninja is not on your path
 path_to_ninja = 'ninja'
-
-#modify by wuding 20161013 
-def find_ninja_file(ninja_root_path, relative_file_path_to_find):
-  '''
-  Returns the first *.ninja file in ninja_root_path that contains
-  relative_file_path_to_find. Otherwise, returns None.
-  '''
-  file_build_relative_path = None
-  matches = []
-  for root, dirnames, filenames in os.walk(ninja_root_path):
-    for filename in fnmatch.filter(filenames, '*.ninja'):
-        matches.append(os.path.join(root, filename))
-  logging.debug("Found %d Ninja targets", len(matches))
-
-  for ninja_file in matches:
-    for line in open(ninja_file):
-      if relative_file_path_to_find in line:
-        if is_win :   
-              build_a,build_b = line.split(':',1)
-              build_c,ninja_build_object = build_a.split(' ',1)
-              
-        project_file = os.path.basename(ninja_file)
-        return (ninja_file,ninja_build_object)
-  return (None,None)
-
-
+ 
 class PrintOutputCommand(sublime_plugin.TextCommand):
     def run(self, edit, **args):
         self.view.set_read_only(False)
@@ -93,6 +68,35 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     self.text_to_draw += text_to_draw
     self.lock.release()
     sublime.set_timeout(self.draw_panel_text, 0)
+
+
+  #modify by wuding 20170329 
+  def find_ninja_file(self,ninja_root_path, relative_file_path_to_find):
+    '''
+    Returns the first *.ninja file in ninja_root_path that contains
+    relative_file_path_to_find. Otherwise, returns None.
+    ''' 
+    file_build_relative_path = None
+    matches = []
+    for root, dirnames, filenames in os.walk(ninja_root_path):
+      for filename in fnmatch.filter(filenames, '*.ninja'):
+          matches.append(os.path.join(root, filename))
+    logging.debug("Found %d Ninja targets", len(matches))
+    
+    self.update_panel_text("ninja_root_path %s\n" %  ninja_root_path)
+    self.update_panel_text("relative_file_path_to_find %s\n" %  relative_file_path_to_find)
+    
+    for ninja_file in matches:
+      for line in open(ninja_file):
+        #self.update_panel_text("ninja_file %s \n" % ninja_file)
+        if relative_file_path_to_find in line:
+          if is_win :   
+                build_a,build_b = line.split(':',1)
+                build_c,ninja_build_object = build_a.split(' ',1)
+                
+          project_file = os.path.basename(ninja_file)
+          return (ninja_file,ninja_build_object)
+    return (None,None)  
 
   def execute_command(self, command, cwd):
     """Execute the provided command and send ouput to panel.
@@ -210,6 +214,9 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     project_folder = self.view.window().folders()[0]
     self.update_panel_text("Compiling current file %s\n" %
                            self.view.file_name())
+    self.update_panel_text("target_build %s\n" %
+                           target_build)
+
     # The file must be somewhere under the project folder...
     if (project_folder.lower() !=
         self.view.file_name()[:len(project_folder)].lower()):
@@ -225,8 +232,14 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
       if is_win :
         file_relative_path = source_relative_path
         file_relative_path = file_relative_path.replace("\\", "/")
-        ninja_build_file,ninja_build_obj_path = find_ninja_file(output_dir, file_relative_path)
+        self.update_panel_text("output_dir %s\n" %  output_dir)
+        self.update_panel_text("file_relative_path %s\n" %  file_relative_path)
+        ninja_build_file,ninja_build_obj_path = self.find_ninja_file(output_dir, file_relative_path)
         source_relative_path = ninja_build_obj_path;
+
+      self.update_panel_text("output_dir %s\n" %  output_dir)
+      self.update_panel_text("file_relative_path %s\n" %  file_relative_path)
+      self.update_panel_text("ninja_build_obj_path %s\n" %  ninja_build_obj_path)
 
       command = [
           path_to_ninja, "-C", os.path.join(project_folder, 'out',
