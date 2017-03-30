@@ -58,6 +58,8 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
     self.text_to_draw = ""
     self.lock.release()
 
+    text_to_draw =  text_to_draw.strip('\t')
+
     if len(text_to_draw):
       self.output_panel.run_command('print_output', {'text': text_to_draw})
       #self.view.window().run_command("show_panel", {"panel": "output.exec"})
@@ -244,7 +246,7 @@ class CompileCurrentFile(sublime_plugin.TextCommand):
       command = [
           path_to_ninja, "-C", os.path.join(project_folder, 'out',
                                             target_build),
-          source_relative_path + '^']
+          source_relative_path ]
 
       
       
